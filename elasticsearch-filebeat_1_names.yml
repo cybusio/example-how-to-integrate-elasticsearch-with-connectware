@@ -1,0 +1,84 @@
+description: Elastic Filebeat reading MQTT Input
+
+metadata:
+  name: Shopfloor 1
+
+parameters:
+
+  filebeatCloudId:
+    type: string
+    description: Something like elastic:d2V***
+
+  filebeatCloudAuth:
+    type: string
+    description: Something like ingest:Xbc***
+
+definitions:
+
+  # Filebeat configuration
+  CONFIG: !sub |
+    filebeat.config:
+      modules:
+        path: /usr/share/filebeat/modules.d/*.yml
+        reload.enabled: false
+
+    filebeat.inputs:
+    - type: mqtt
+      hosts:
+        - tcp://${Cybus::MqttHost}:${Cybus::MqttPort}
+      username: ${Cybus::MqttUser}
+      password: ${Cybus::MqttPassword}
+      client_id: ${Cybus::ServiceId}-filebeat
+      qos: 0
+      topics:
+        - some/topic
+
+      fields:
+        shopfloor: 1
+        location: Grünheide
+        dataShipper: Cybus Connectware
+
+      fields_under_root: true
+
+    processors:
+      - decode_json_fields:
+          fields: ["message"]
+          expand_keys: true
+          add_error_key: true
+          target: "payload"
+
+    setup.ilm.enabled: false
+    setup.template.name: "some_template"
+    setup.template.pattern: "my-pattern-*"
+
+    output.elasticsearch:
+      index: "idx-%{+yyyy.MM.dd}-00001"
+
+    cloud.id: "${filebeatCloudId}"
+    cloud.auth: "${filebeatCloudAuth}"
+
+    name: "shopfloor-1-mqttbeat"
+    tags: [ "Cybus Connectware", "edge platform", "mqtt" ]
+
+resources:
+
+  filebeat_Machine_A_032:
+    type: Cybus::Container
+    properties:
+      image: docker.elastic.co/beats/filebeat:7.13.2
+      entrypoint: [""]
+      command:
+        - "/bin/bash"
+        - "-c"
+        - !sub 'echo "${CONFIG}" > /tmp/filebeat.docker.yml && /usr/bin/tini -s -- /usr/local/bin/docker-entrypoint -c /tmp/filebeat.docker.yml -environment container'
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Gaining privileges
+  defaultRole:
+    type: Cybus::Role
+    properties:
+      permissions:
+        - resource: some/topic
+          operation: read
+          context: mqtt
