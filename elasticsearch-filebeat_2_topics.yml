@@ -1,0 +1,308 @@
+description: Elastic Filebeat reading MQTT Input
+
+metadata:
+  name: Shopfloor 1
+
+parameters:
+
+  filebeatCloudId:
+    type: string
+    description: Something like elastic:d2V***
+
+  filebeatCloudAuth:
+    type: string
+    description: Something like ingest:Xbc***
+
+definitions:
+
+  # Filebeat configuration
+  CONFIG: !sub |
+    filebeat.config:
+      modules:
+        path: /usr/share/filebeat/modules.d/*.yml
+        reload.enabled: false
+
+    filebeat.inputs:
+    - type: mqtt
+      hosts:
+        - tcp://${Cybus::MqttHost}:${Cybus::MqttPort}
+      username: ${Cybus::MqttUser}
+      password: ${Cybus::MqttPassword}
+      client_id: ${Cybus::ServiceId}-filebeat
+      qos: 0
+      topics:
+        - machine/M1
+        - machine/M2
+
+      fields:
+        shopfloor: 1
+        location: Grünheide
+        dataShipper: Cybus Connectware
+
+      fields_under_root: true
+
+    processors:
+      - decode_json_fields:
+          fields: ["message"]
+          expand_keys: true
+          add_error_key: true
+          target: "payload"
+
+    setup.ilm.enabled: false
+    setup.template.name: "some_template"
+    setup.template.pattern: "my-pattern-*"
+
+    output.elasticsearch:
+      index: "idx-%{+yyyy.MM.dd}-00001"
+
+    cloud.id: "${filebeatCloudId}"
+    cloud.auth: "${filebeatCloudAuth}"
+
+    name: "shopfloor-1-mqttbeat"
+    tags: [ "Cybus Connectware", "edge platform", "mqtt" ]
+
+resources:
+
+  #----------------------------------------------------------------------------
+  # Elasticsearch connection
+  #----------------------------------------------------------------------------
+
+  filebeat_MachineData:
+    type: Cybus::Container
+    properties:
+      image: docker.elastic.co/beats/filebeat:7.13.2
+      entrypoint: [""]
+      command:
+        - "/bin/bash"
+        - "-c"
+        - !sub 'echo "${CONFIG}" > /tmp/filebeat.docker.yml && /usr/bin/tini -s -- /usr/local/bin/docker-entrypoint -c /tmp/filebeat.docker.yml -environment container'
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # Gaining privileges
+  defaultRole:
+    type: Cybus::Role
+    properties:
+      permissions:
+        - resource: machine/#
+          operation: read
+          context: mqtt
+
+  #----------------------------------------------------------------------------
+  # OPC-UA data source
+  #----------------------------------------------------------------------------
+
+  opcuaServer:
+    type: Cybus::Container
+    properties:
+      image: registry.cybus.io/cybus-factory/opcua-server:1.0.1
+      ports:
+        - 4840:50000/tcp
+      command:
+        - '--unsecuretransport'
+        - '--autoaccept'
+        - '--defaultuser=user'
+        - '--defaultpassword=pass'
+
+  opcuaConnection:
+    type: Cybus::Connection
+    properties:
+      protocol: Opcua
+      targetState: connected
+      connection:
+        host: 172.17.0.1
+        port: 4840
+        username: user
+        password: pass
+
+  opcuaTemperature:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Opcua
+      connection: !ref opcuaConnection
+      subscribe:
+        nodeId: ns=2;s=SpikeData
+        samplingInterval: 2000
+
+  opcuaVibration:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Opcua
+      connection: !ref opcuaConnection
+      subscribe:
+        nodeId: ns=2;s=DipData
+        samplingInterval: 1000
+
+  #----------------------------------------------------------------------------
+  # Modbus data source simulator
+  #----------------------------------------------------------------------------
+
+  modbusMachine:
+    type: Cybus::Container
+    properties:
+      image: registry.cybus.io/cybus-services/baz-machine-simulator:0.0.1
+      ports:
+        - 10502:10502/tcp
+
+  modbusConnection:
+    type: Cybus::Connection
+    properties:
+      protocol: Modbus
+      targetState: connected
+      connection:
+        host: 172.17.0.1
+        port: 10502
+
+  powerLevel:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Modbus
+      connection: !ref modbusConnection
+      subscribe:
+        fc: 3
+        length: 2
+        interval: 1000
+        address: 0
+
+  coolantLevel:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Modbus
+      connection: !ref modbusConnection
+      subscribe:
+        fc: 3
+        length: 2
+        interval: 1000
+        dataType: uint16BE
+        address: 4
+
+  spindleSpeed:
+    type: Cybus::Endpoint
+    properties:
+      protocol: Modbus
+      connection: !ref modbusConnection
+      subscribe:
+        fc: 3
+        length: 2
+        interval: 1000
+        dataType: uint16BE
+        address: 6
+
+  #----------------------------------------------------------------------------
+  # Mappings
+  #----------------------------------------------------------------------------
+
+  endpointMapping:
+    type: Cybus::Mapping
+    properties:
+      mappings:
+        - subscribe:
+            endpoint: !ref opcuaTemperature
+          publish:
+            topic: !sub '${Cybus::MqttRoot}/m1/temperature'
+        - subscribe:
+            endpoint: !ref opcuaVibration
+          publish:
+            topic: !sub '${Cybus::MqttRoot}/m1/vibration'
+        - subscribe:
+            endpoint: !ref powerLevel
+          publish:
+            topic: !sub '${Cybus::MqttRoot}/m2/power-level'
+          rules:
+            - parse:
+                format: floatBE
+            - transform:
+                expression: |
+                  {
+                    "value": $
+                  }
+        - subscribe:
+            endpoint: !ref coolantLevel
+          publish:
+            topic: !sub '${Cybus::MqttRoot}/m2/coolantLevel'
+        - subscribe:
+            endpoint: !ref spindleSpeed
+          publish:
+            topic: !sub '${Cybus::MqttRoot}/m2/spindleSpeed'
+
+  machineDataMapping:
+    type: Cybus::Mapping
+    properties:
+      mappings:
+        - subscribe:
+            topic: !sub '${Cybus::MqttRoot}/m1/+field'
+          rules:
+            - transform:
+                expression: |
+                  (
+                    $d := { $context.vars.field: value };
+                    $merge(
+                      [
+                        $last(),
+                        {
+                          "temperature": $d.`temperature`,
+                          "vibration": $d.`vibration`,
+                          "timestamp": timestamp
+                        }
+                      ]
+                    )
+                  )
+          publish:
+            topic: '${Cybus::MqttRoot}/twin/m1'
+        - subscribe:
+            topic: !sub '${Cybus::MqttRoot}/m2/+field'
+          rules:
+            - transform:
+                expression: |
+                  (
+                    $d := { $context.vars.field: value };
+                    $merge(
+                      [
+                        $last(),
+                        {
+                          "coolantLevel": $d.`coolantLevel`,
+                          "power-level": $d.`power-level`,
+                          "spindleSpeed": $d.`spindleSpeed`,
+                          "timestamp": timestamp
+                        }
+                      ]
+                    )
+                  )
+          publish:
+            topic: '${Cybus::MqttRoot}/twin/m2'
+
+  filebeatMapping:
+    type: Cybus::Mapping
+    properties:
+      mappings:
+        - subscribe:
+            topic: !sub '${Cybus::MqttRoot}/twin/m1'
+          rules:
+            - transform:
+                expression: |
+                  {
+                    "machineId": "a001",
+                    "machine_data": {
+                      "timestamp": timestamp,
+                      "temperature": temperature,
+                      "vibration": vibration
+                    }
+                  }
+          publish:
+            topic: 'machine/M1'
+        - subscribe:
+            topic: !sub '${Cybus::MqttRoot}/twin/m2'
+          rules:
+            - transform:
+                expression: |
+                  {
+                    "machineId": "a002",
+                    "machine_data": {
+                      "timestamp": timestamp,
+                      "power-level": power-level,
+                      "coolantLevel": coolantLevel,
+                      "spindleSpeed": spindleSpeed
+                    }
+                  }
+          publish:
+            topic: 'machine/M2'
