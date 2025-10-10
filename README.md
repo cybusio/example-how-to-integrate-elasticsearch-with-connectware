@@ -1,4 +1,4 @@
-# Cybus Learn - Elastic Stack
+# How to integrate Elasticsearch with Connectware
 
 This repository describes how to integrate Elasticsearch with Cybus Connectware.
 
@@ -7,16 +7,14 @@ Connectware with Elasticsearch endpoints using a Filebeat with MQTT input.
 
 ## Prerequisites
 
-The Cybus Connectware and an Elasticsearch Cluster endpoint are required.
-
+The Cybus Connectware and an Elasticsearch Cluster endpoints are required.
 
 ## Integration Elasticsearch with Cybus Connectware
 
-The test resources add complexity to the integration example stepwise
-according to the corresponding Cybus Learn Article.
+The test resources add complexity to the integration example.
 
-For a fast outcome get a free https://cloud.elastic.co demo instance
-and note the CloudId and CloudAuth data in the service commissioning files
+To achieve a quick outcome, obtain a free demo instance from https://cloud.elastic.co 
+and write down the CloudId and CloudAuth data from the service commissioning files.
 
 The different files have the following purpose:
 
@@ -24,11 +22,9 @@ The different files have the following purpose:
 - `elasticsearch-filebeat_1_names`: fix names to identify service and context better in the search index
 - `elasticsearch-filebeat_2_topics`: add data sources from simulators and continually send data
 
-The simulators are extracted from the BAZ example in https://docs.cybus.io
-and the [Cybus Learn Article "Service Basics"](https://learn.cybus.io/)
+The simulators are extracted from the BAZ example in https://docs.cybus.io.
 
-
-In order to test this just configure the two configuration parameters provided by the
+To test this, configure the following configuration parameters provided by the
 elasticsearch cluster environment:
 
 - `filebeatCloudId`
@@ -36,7 +32,7 @@ elasticsearch cluster environment:
 
 ## Verify successful integration
 
-To see a successful integration you may use Kibana in the Elastic Cloud console
+To see a successful integration, you can use Kibana in the Elastic Cloud console
 and review the machine data continuously added to the search index.
 
 ## References
@@ -45,4 +41,3 @@ and review the machine data continuously added to the search index.
 - [Filebeat Reference MQTT Input](https://www.elastic.co/guide/en/beats/filebeat/current/filebeat-input-mqtt.html)
 - [Cybus Homepage](https://www.cybus.io/)
 - [Cybus Connectware documentation](https://docs.cybus.io)
-- [Cybus Learn Service Basics](https://learn.cybus.io/lessons/mqtt-basics/)
